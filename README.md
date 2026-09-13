@@ -138,6 +138,51 @@ protection:
   while on home Wi-Fi. Only covers home network — full protection on cellular/other
   networks is deferred to the Tailscale setup in Phase 5.
 
-## Next — Phase 4
+## Phase 4 — Nextcloud (File & Photo Storage)
 
-Setting up Nextcloud (Docker) for file/photo storage on the 1TB external HDD.
+- Backend database: **PostgreSQL** instead of MariaDB (switched on a friend's
+  recommendation — Nextcloud's own docs also recommend Postgres for new installs).
+- Passed the 2TB external HDD (initially thought to be 1TB) through to the VM via
+  VirtualBox USB passthrough.
+  - **Gotcha**: device letters (`/dev/sda` vs `/dev/sdb`) swapped between reboots
+    depending on attach order — always re-verified with
+    `lsblk -o NAME,SIZE,MODEL,FSTYPE,LABEL` before running any destructive command,
+    since blindly trusting the same device letter each time would have risked
+    wiping the VM's own OS disk instead of the external drive.
+  - Drive already had an existing NTFS filesystem with personal files on it —
+    backed everything up to the Windows host via `scp` before reformatting
+    (`sudo mkfs.ext4 /dev/sdb1`) to ext4.
+  - Mounted at `/mnt/storage`, added a permanent `/etc/fstab` entry keyed by UUID
+    (not device letter, since that can change) so it survives reboots.
+- Installed **Docker** (`docker.io` package, already bundled modern Compose as a
+  plugin — used `docker compose` with a space, not the old standalone
+  `docker-compose` hyphenated binary).
+- `docker-compose.yml` runs two containers: `db` (postgres:16) and `app`
+  (nextcloud), with both data volumes pointed at `/mnt/storage` (`postgres/` and
+  `nextcloud/` subfolders) so nothing lands on the VM's 80GB OS disk.
+- Opened port `8080/tcp` in ufw for the Nextcloud web UI.
+- **Main issue hit**: typo'd mismatched `POSTGRES_PASSWORD` values between the
+  `db` and `app` services in the compose file, causing
+  `password authentication failed for user "nextcloud"` on setup.
+  - Fixing the compose file alone wasn't enough — Postgres only applies
+    `POSTGRES_PASSWORD` on a truly empty data directory, so it kept using the
+    original (wrong) password from its first run even after the file was
+    corrected.
+  - Resolved by fully tearing down (`docker compose down -v`) and deleting the
+    entire `/mnt/storage/postgres` folder (not just its contents) to force a
+    genuine `initdb` on the next `docker compose up -d` — confirmed via the logs
+    showing `running bootstrap script` instead of `database system was shut
+    down` (which indicated it was reusing old data).
+- Skipped Nextcloud's bundled recommended apps (Calendar, Mail, Talk, etc.) on
+  install — kept it lean given the VM's 4GB RAM is shared with Pi-hole.
+- Verified storage is correctly routed to the external drive, not the OS disk:
+  `/mnt/storage` (1.8TB drive) showed actual usage growing; `/` (80GB OS disk)
+  stayed flat.
+- Changed the admin account password after it was briefly visible on-screen
+  during setup.
+- Confirmed file upload/download works through the web UI.
+
+## Next — Phase 5
+
+Setting up Tailscale so Pi-hole's adblocking and Nextcloud's file sync both work
+on the iPhone from anywhere, not just on home Wi-Fi.
