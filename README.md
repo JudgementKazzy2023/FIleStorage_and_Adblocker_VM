@@ -186,3 +186,53 @@ protection:
 
 Setting up Tailscale so Pi-hole's adblocking and Nextcloud's file sync both work
 on the iPhone from anywhere, not just on home Wi-Fi.
+
+## Phase 5 — Tailscale (Remote Access for iPhone)
+
+- Installed Tailscale on the VM (`curl -fsSL https://tailscale.com/install.sh | sh`
+  then `sudo tailscale up`), authorized via the login link in a browser.
+- VM's Tailscale IP: `100.115.94.1`.
+- Installed the Tailscale app on iPhone, logged into the same account. Confirmed
+  the tunnel works both directions with `tailscale ping <phone-name>` from the VM.
+- **DNS override (Pi-hole everywhere, not just home Wi-Fi)**:
+  - In the [Tailscale admin console → DNS](https://login.tailscale.com/admin/dns),
+    added the VM's Tailscale IP (`100.115.94.1`) as a **Global nameserver** and
+    enabled **"Override local DNS"**.
+  - This replaced the earlier approach of manually setting DNS per Wi-Fi network
+    on the phone (Settings → Wi-Fi → Configure DNS), which only worked on that
+    one network and proved unreliable/easy to accidentally revert.
+  - **Issue hit**: even with the override configured correctly, websites failed
+    to load entirely on cellular. Root cause: Pi-hole's default **Interface
+    settings** ("Allow only local requests") only accepts DNS queries from
+    devices one hop away on the home LAN — Tailscale's tunnel interface doesn't
+    count as "local," so it was silently dropping all queries arriving over the
+    tunnel.
+    - Fixed in Pi-hole dashboard: **Settings → DNS → Interface settings →
+      "Permit all origins."** This is normally flagged as a "potentially
+      dangerous" option, but is safe here specifically because there's no port
+      forwarding on the router and `ufw` is already restricting what can reach
+      the VM — the only path in is already-authorized Tailscale devices.
+  - Confirmed fix by toggling Tailscale off/on on the iPhone and successfully
+    loading sites on cellular data (no home Wi-Fi).
+- **Nextcloud over Tailscale**:
+  - Nextcloud rejects requests to any address not on its `trusted_domains` list,
+    which only had the LAN IP (`192.168.1.205`) by default.
+  - Added the Tailscale IP via the Nextcloud container's `occ` CLI:
+    ```
+    sudo docker exec -it nextcloud-app-1 bash
+    php occ config:system:set trusted_domains 1 --value="100.115.94.1"
+    ```
+  - Re-logged into the iPhone Nextcloud app pointing at
+    `http://100.115.94.1:8080` instead of the LAN address.
+  - Confirmed Files load and sync works over cellular, not just home Wi-Fi.
+- **Result**: both core project goals — network-wide adblocking and phone
+  file/photo sync — now work from anywhere, not just at home, fulfilling the
+  original project requirements.
+
+## Project Status
+
+Core build complete: Pi-hole (adblocking), Nextcloud (file/photo storage), and
+Tailscale (remote access for both) are all working together on the iPhone,
+both on home Wi-Fi and cellular. Possible future work: Unbound for fully
+self-hosted DNS resolution, automated backups of the Nextcloud/Postgres data,
+and extending Tailscale/Pi-hole coverage to other devices (Smart TV, laptop).
